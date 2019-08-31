@@ -3,6 +3,7 @@ const router = express.Router({});
 const debug = require('debug');
 const jwtCheck = require('../middleware/jwt-middleware').jwtCheck;
 const Joi = require('@hapi/joi');
+const Fuse = require('fuse.js');
 
 const error = debug('server:error');
 
@@ -40,19 +41,40 @@ router.get('/invitations/find/:query', (req, res) => {
       Joi.string().email().required()
     )
   });
-  const result = Joi.validate({ query }, schema);
+
+  const trimmedQuery = query.trim();
+  const result = Joi.validate({
+    query: Boolean(query && query.length) ? trimmedQuery : ''
+  }, schema);
+
   if (result.error) {
     error('happilyeverhage:findInvitationByName - Bad search query', result.error);
     return res.sendStatus(400);
   }
   mySqlManager
-    .findInvitation(query.trim())
+    .findInvitation(trimmedQuery)
     .then(results => {
       if (results && results.length) {
         return res.status(200).json(results[0]);
       } else {
-        error('happilyeverhage:findInvitationByName - No results found for search query ' + query);
-        return res.sendStatus(400);
+        mySqlManager
+          .retrieveAllInvitations()
+          .then(results => {
+            const fuse = new Fuse(results, {
+              shouldSort: true,
+              tokenize: true,
+              maxPatternLength: 50,
+              minMatchCharLength: 2,
+              keys: ['name']
+            });
+            const matches = fuse.search(query.trim());
+            if (matches && matches.length) {
+              return res.status(200).json(matches[0]);
+            } else {
+              error('happilyeverhage:findInvitationByName - No results found for search query ' + query);
+              return res.sendStatus(400);
+            }
+          });
       }
     })
     .catch(err => {
